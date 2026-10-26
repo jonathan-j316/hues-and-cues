@@ -1,0 +1,100 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Hues & Cues</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:18px system-ui,sans-serif;background:#17151f;color:#fff;min-height:100vh;display:flex;flex-direction:column}
+#bar{padding:14px;text-align:center;font-weight:700;background:#2a2638}
+main{flex:1;padding:16px;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;text-align:center}
+input{font:inherit;font-size:28px;font-weight:700;text-align:center;width:100%;max-width:320px;padding:14px;border-radius:14px;border:2px solid #666;background:#211e2d;color:#fff}
+button{font:inherit;font-weight:700;padding:16px 28px;border:0;border-radius:14px;background:#7c5cff;color:#fff;width:100%;max-width:320px}
+button:disabled{opacity:.35}
+.sw{width:200px;height:200px;border-radius:24px;border:4px solid #fff}
+.err{color:#ff8a80;min-height:1.3em}.big{font-size:42px;font-weight:800}.dim{opacity:.7}
+#g{display:grid;grid-template-columns:repeat(30,1fr);width:100%;max-width:520px;touch-action:none;user-select:none;border:2px solid #fff}
+#g div{height:19px}
+#g .tk{opacity:.1}
+#g .sel{outline:2px solid #fff;box-shadow:0 0 0 4px #000;position:relative;z-index:2;transform:scale(1.9)}
+#selrow{display:flex;align-items:center;gap:14px}
+#pv{width:56px;height:56px;border-radius:12px;border:3px solid #fff;background:#444}
+#arrows{display:flex;gap:10px}#arrows button{width:64px;padding:10px}
+</style></head><body><div id=bar>Hues &amp; Cues</div><main id=m></main>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const col=(r,c)=>`hsl(${c*12},${r?90:75}%,${86-r*4.4}%)`;
+const L='ABCDEFGHIJKLMNOP';
+let id=localStorage.hcid||'',name=localStorage.hcname||'',es,S,last='',sel=null,down=0;
+const api=async o=>(await fetch('/api',{method:'POST',body:JSON.stringify({id,...o})})).json();
+function showJoin(err=''){last='';$('#bar').textContent='Hues & Cues';
+  $('#m').innerHTML=`<div class=big>Join the game</div><input id=nm maxlength=16 placeholder="Your name" autocomplete=off><div class=err>${esc(err)}</div><button onclick=doJoin()>Join</button>`}
+function doJoin(){name=$('#nm').value.trim();localStorage.hcname=name;connect()}
+async function connect(){
+  if(!name)return showJoin();
+  let j;try{j=await api({action:'join',name})}catch{return setTimeout(connect,1500)}
+  if(!j.ok){name='';id='';localStorage.removeItem('hcname');localStorage.removeItem('hcid');return showJoin(j.error)}
+  id=localStorage.hcid=j.id;
+  if(es)es.close();
+  es=new EventSource('/events?id='+id);
+  es.onmessage=e=>{S=JSON.parse(e.data);render()};
+  es.onerror=()=>{es.close();setTimeout(connect,1500)};
+}
+function render(){
+  const{taken,...rest}=S,k=JSON.stringify(rest);
+  if(k===last){if($('#g'))applyTaken();return}
+  last=k;
+  const ph=S.phase,t=S.target,g=esc(S.giver||'');
+  $('#bar').textContent=`${S.me.name} · ${S.me.score} pts`+(S.total&&ph!=='lobby'&&ph!=='end'?` · Round ${S.ri+1}/${S.total}`:'');
+  const lb='<div style="width:100%;max-width:320px;text-align:left">'+S.board.map((p,i)=>`<div>${i+1}. ${esc(p.name)} <b style="float:right">${p.score}</b></div>`).join('')+'</div>';
+  const sw=t?`<div class=sw style="background:${t.color}"></div><div class=big>${t.label}</div>`:'';
+  const mine=S.mine.length?`<div class=dim>Your guesses: ${S.mine.join(', ')}</div>`:'';
+  let h='';
+  if(ph==='lobby')h='<div class=big>You\'re in!</div><div class=dim>Waiting for the host to start the game…</div>';
+  else if(ph==='end')h=`<div class=big>Game over</div>${lb}`;
+  else if(ph==='reveal')h=`<div class=dim>The colour was</div>${sw}<div class=big>+${S.pts} pts</div>${lb}`;
+  else if(!S.inRound)h='<div class=dim>You joined mid-round. You\'ll play from the next round.</div>';
+  else if(ph.startsWith('clue')){
+    const n=ph==='clue1'?'ONE':'TWO';
+    h=S.isGiver?`${sw}<div>Say a <b>${n}-word</b> clue out loud, then tap Ready.</div><button onclick="api({action:'ready'})">Ready</button>`
+      :`<div class=big>${g}</div><div>is the clue giver and is about to give a ${n}-word clue.</div>${mine}`;
+  }else if(S.isGiver)h=`<div class=dim>You're the clue giver</div>${sw}<div>Players are guessing…</div>`;
+  else if(S.locked)h=`<div class=big>✓ Locked in</div><div class=dim>Waiting for the other players…</div>${mine}`;
+  else h=`<div>Guess ${ph[5]} of 2 · clue giver: <b>${g}</b></div><div class=dim>Match the colour on the big screen. Tap or drag on the grid.</div>
+    <div id=g></div>
+    <div id=selrow><div id=pv></div><div class=big id=lab>–</div></div>
+    <div id=arrows><button onclick="mv(0,-1)">◀</button><button onclick="mv(-1,0)">▲</button><button onclick="mv(1,0)">▼</button><button onclick="mv(0,1)">▶</button></div>
+    <div class=err id=err></div><button id=lk onclick=lock() disabled>Lock in</button>${mine}`;
+  $('#m').innerHTML=h;
+  if($('#g'))buildGrid();
+}
+function buildGrid(){
+  const g=$('#g');sel=null;
+  for(let r=0;r<16;r++)for(let c=0;c<30;c++){const d=document.createElement('div');d.id=`c${r}_${c}`;d.style.background=col(r,c);g.appendChild(d)}
+  const at=e=>{const b=g.getBoundingClientRect();
+    pick(Math.min(15,Math.max(0,Math.floor((e.clientY-b.top)/b.height*16))),Math.min(29,Math.max(0,Math.floor((e.clientX-b.left)/b.width*30))))};
+  g.onpointerdown=e=>{down=1;at(e)};g.onpointermove=e=>{if(down)at(e)};
+  window.onpointerup=window.onpointercancel=()=>down=0;
+  applyTaken();
+}
+function isTaken(r,c){return S.taken.some(t=>t[0]===r&&t[1]===c)}
+function pick(r,c){
+  const o=$('.sel');if(o)o.classList.remove('sel');
+  sel=[r,c];$(`#c${r}_${c}`).classList.add('sel');
+  $('#lab').textContent=L[r]+(c+1);$('#pv').style.background=col(r,c);
+  upd();
+}
+function mv(dr,dc){if(!sel)return pick(8,15);pick(Math.min(15,Math.max(0,sel[0]+dr)),Math.min(29,Math.max(0,sel[1]+dc)))}
+function upd(){
+  const tk=sel&&isTaken(sel[0],sel[1]);
+  $('#lk').disabled=!sel||tk;
+  $('#err').textContent=tk?`${L[sel[0]]+(sel[1]+1)} is already taken – pick another cell`:'';
+}
+function applyTaken(){
+  document.querySelectorAll('#g .tk').forEach(e=>e.classList.remove('tk'));
+  S.taken.forEach(t=>$(`#c${t[0]}_${t[1]}`).classList.add('tk'));
+  upd();
+}
+async function lock(){
+  const j=await api({action:'guess',cell:L[sel[0]]+(sel[1]+1)});
+  if(!j.ok)$('#err').textContent=j.error;
+}
+connect();
+</script></body></html>

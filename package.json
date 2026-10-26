@@ -1,0 +1,1 @@
+{"name":"hues-and-cues","version":"1.0.0","description":"Host-screen + phone party game","scripts":{"start":"node server.js"}}

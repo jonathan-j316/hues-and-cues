@@ -1,0 +1,61 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><title>Hues & Cues – Host</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#17151f;color:#fff;font:1.1vw system-ui,sans-serif;display:flex;height:100vh;overflow:hidden}
+#bw{flex:1;padding:1.2vw;display:flex;align-items:center}
+#board{display:grid;grid-template-columns:repeat(31,1fr);width:100%;gap:1px}
+#board>div{aspect-ratio:1;position:relative;font-size:.75vw;display:flex;align-items:center;justify-content:center;color:#aaa}
+.t{position:absolute;inset:5%;border-radius:50%;border:.2vw solid #fff;color:#fff;font-weight:800;font-size:1vw;display:flex;align-items:center;justify-content:center;text-shadow:0 0 3px #000;z-index:2}
+.t.sq{border-radius:25%}
+#board>.hit{outline:.3vw solid #fff;z-index:3;animation:p .6s infinite alternate}
+@keyframes p{to{outline-color:#000;transform:scale(1.7)}}
+#side{width:26vw;padding:1.2vw;background:#211e2d;overflow:auto;display:flex;flex-direction:column;gap:.9vw}
+h1,h2{margin:0}h1{font-size:2vw}h2{font-size:1.5vw}
+button{font:inherit;font-weight:700;padding:.8vw;border:0;border-radius:.6vw;background:#7c5cff;color:#fff;cursor:pointer}
+button.sec{background:#3a3550}button:disabled{opacity:.4}
+.chip{display:inline-block;background:#3a3550;border-radius:2em;padding:.2em .7em;margin:.15em}
+a{cursor:pointer;margin-left:.3em}
+#qr{background:#fff;padding:.5vw;display:inline-block}
+</style></head><body>
+<div id=bw><div id=board></div></div>
+<div id=side><h1>Hues &amp; Cues</h1>
+<div id=qrbox><div id=qr></div><div>Scan or open <b id=url></b></div></div>
+<div id=info></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const LET='ABCDEFGHIJKLMNOP',$=s=>document.getElementById(s);
+const col=(r,c)=>`hsl(${c*12},${r?90:75}%,${86-r*4.4}%)`;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const act=o=>fetch('/api',{method:'POST',body:JSON.stringify(o)});
+$('board').innerHTML='<div></div>'+[...Array(30)].map((_,c)=>`<div>${c+1}</div>`).join('')+
+  [...LET].map((l,r)=>`<div>${l}</div>`+[...Array(30)].map((_,c)=>`<div id=x${r}_${c} style="background:${col(r,c)}"></div>`).join('')).join('');
+let per=1,lastPh='',qr=0;
+function beep(){try{const a=new AudioContext(),o=a.createOscillator();o.connect(a.destination);o.frequency.value=660;o.start();o.stop(a.currentTime+.25)}catch{}}
+function render(S){
+  document.querySelectorAll('.t').forEach(e=>e.remove());
+  document.querySelectorAll('.hit').forEach(e=>e.classList.remove('hit'));
+  S.tokens.forEach(t=>{const d=document.createElement('div');d.className='t'+(t.n==2?' sq':'');
+    d.style.background=`hsl(${t.idx*137.5%360},70%,38%)`;d.textContent=t.i;$(`x${t.r}_${t.c}`).appendChild(d)});
+  if(S.target){$(`x${S.target.r}_${S.target.c}`).classList.add('hit');if(lastPh!=='reveal')beep()}
+  const ph=S.phase;lastPh=ph;
+  $('qrbox').style.display=ph==='lobby'?'block':'none';$('url').textContent=S.url;
+  if(!qr&&window.QRCode){new QRCode($('qr'),{text:S.url,width:150,height:150});qr=1}
+  const on=S.players.filter(p=>p.on).length;
+  const sb='<div>'+S.board.map((p,i)=>`<div>${i+1}. ${esc(p.name)} <b style="float:right">${p.score}</b></div>`).join('')+'</div>';
+  let h='';
+  if(ph==='lobby')h=`<div>Players (${on}/30) — minimum 3</div><div>${S.players.map(p=>`<span class=chip style="opacity:${p.on?1:.4}">${esc(p.name)}</span>`).join('')}</div>
+    <label>Rounds per player <select onchange="per=+this.value">${[1,2,3].map(n=>`<option ${n==per?'selected':''}>${n}</option>`).join('')}</select></label>
+    <button ${on<3?'disabled':''} onclick="act({action:'start',per})">Start game</button>`;
+  else if(ph==='end')h=`<h2>🏆 ${esc(S.board[0].name)} wins!</h2>${sb}<button onclick="act({action:'again'})">Play again</button>`;
+  else if(ph==='reveal')h=`<h2>The colour was ${S.target.label}</h2>${S.rs.map(r=>`<div>${esc(r.name)} <b style="float:right">+${r.pts}</b></div>`).join('')}<hr style="width:100%">${sb}
+    <button onclick="act({action:'next'})">${S.ri+1>=S.total?'Final results':'Next round'}</button>`;
+  else{
+    const msg={clue1:`${S.giver} is thinking of a ONE-WORD clue…`,guess1:'Guess 1 of 2: type a coordinate on your phone',clue2:`${S.giver} is giving a TWO-WORD clue…`,guess2:'Guess 2 of 2: type a coordinate on your phone'}[ph];
+    h=`<div>Round ${S.ri+1} of ${S.total}. Clue giver: <b>${esc(S.giver)}</b></div><h2>${esc(msg)}</h2>
+    <div>Waiting for: ${S.waiting.map(w=>`<span class=chip>${esc(w.name)}${ph.startsWith('guess')?`<a title="Skip player" onclick="act({action:'skip',pid:'${w.id}'})">✕</a>`:''}</span>`).join('')}</div>
+    ${sb}<button class=sec onclick="act({action:'skipround'})">Skip round</button>`;
+  }
+  $('info').innerHTML=h;
+}
+new EventSource('/events?host=1').onmessage=e=>render(JSON.parse(e.data));
+</script></body></html>
